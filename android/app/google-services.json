@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "152454157784",
+    "project_id": "aids-attendance-system",
+    "storage_bucket": "aids-attendance-system.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:152454157784:android:3d2780e12365ec9a9ccead",
+        "android_client_info": {
+          "package_name": "com.example.attendance_system"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADOxFWnHY-juUg4av8mpi9bKJwpzBmGhI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
