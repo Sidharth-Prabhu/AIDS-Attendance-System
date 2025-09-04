@@ -11,6 +11,8 @@ import 'package:share_plus/share_plus.dart';
 import '../models/student.dart';
 
 class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
@@ -218,8 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final dir = await getApplicationDocumentsDirectory();
-      String path =
-          '${dir.path}/attendance_report_${startStr}_to_${endStr}.xlsx';
+      String path = '${dir.path}/attendance_report_${startStr}_to_$endStr.xlsx';
       File file = File(path);
       await file.writeAsBytes(bytes);
 
