@@ -1,13 +1,16 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
 
 // Color Scheme
@@ -88,7 +91,7 @@ final List<Map<String, String>> students = [
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -97,26 +100,26 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Attendance Pro',
+      title: 'Attendance System',
       theme: ThemeData(
         primaryColor: primaryColor,
-        colorScheme: ColorScheme.light(
+        colorScheme: const ColorScheme.light(
           primary: primaryColor,
           secondary: secondaryColor,
           surface: backgroundColor,
         ),
         scaffoldBackgroundColor: backgroundColor,
-        appBarTheme: AppBarTheme(
+        appBarTheme: const AppBarTheme(
           backgroundColor: primaryColor,
           elevation: 0,
           centerTitle: true,
           iconTheme: IconThemeData(color: Colors.white),
         ),
-        inputDecorationTheme: InputDecorationTheme(
+        inputDecorationTheme: const InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.all(Radius.circular(12)),
             borderSide: BorderSide.none,
           ),
           contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -125,14 +128,14 @@ class MyApp extends StatelessWidget {
           style: ElevatedButton.styleFrom(
             backgroundColor: primaryColor,
             foregroundColor: Colors.white,
-            padding: EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
             elevation: 2,
           ),
         ),
-        textTheme: TextTheme(
+        textTheme: const TextTheme(
           displaySmall: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.bold,
@@ -143,11 +146,87 @@ class MyApp extends StatelessWidget {
             fontWeight: FontWeight.w600,
             color: textColor,
           ),
-          bodyLarge: TextStyle(fontSize: 16, color: textColor.withOpacity(0.8)),
+          bodyLarge: TextStyle(fontSize: 16, color: textColor),
         ),
       ),
-      home: AuthWrapper(),
+      home: const AuthWrapper(),
     );
+  }
+}
+
+class UpdateManager {
+  static const String githubOwner = 'Sidharth-Prabhu';
+  static const String githubRepo = 'AIDS-Attendance-System';
+  static const String releasesUrl =
+      'https://github.com/Sidharth-Prabhu/AIDS-Attendance-System/releases';
+
+  static Future<bool> isUpdateAvailable() async {
+    try {
+      debugPrint('Checking for updates...');
+      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      final String currentVersion = packageInfo.version;
+      debugPrint('Current version: $currentVersion');
+
+      final response = await http.get(
+        Uri.parse(
+          'https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest',
+        ),
+      );
+      debugPrint('Response status: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        debugPrint('Failed to fetch releases: ${response.body}');
+        return false;
+      }
+
+      final release = jsonDecode(response.body);
+      final String latestVersion = release['tag_name'].replaceAll('v', '');
+      debugPrint('Latest version: $latestVersion');
+
+      final currentParts = currentVersion.split('.').map(int.parse).toList();
+      final latestParts = latestVersion.split('.').map(int.parse).toList();
+
+      for (int i = 0; i < currentParts.length; i++) {
+        if (latestParts[i] > currentParts[i]) {
+          return true;
+        } else if (latestParts[i] < currentParts[i]) {
+          return false;
+        }
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Update check error: $e');
+      return false;
+    }
+  }
+
+  static Future<void> openReleasesPage(BuildContext context) async {
+    final Uri url = Uri.parse(releasesUrl);
+    try {
+      // Try external application first
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+        debugPrint('Successfully launched $releasesUrl');
+      } else {
+        // Fallback to in-app web view
+        debugPrint('Falling back to platform web view for $releasesUrl');
+        if (await canLaunchUrl(url)) {
+          await launchUrl(url, mode: LaunchMode.platformDefault);
+        } else {
+          throw 'No suitable app found to open $releasesUrl';
+        }
+      }
+    } catch (e) {
+      debugPrint('Error launching URL: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to open releases page. Please visit $releasesUrl manually.',
+          ),
+          backgroundColor: warningColor,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 }
 
@@ -162,56 +241,112 @@ class _AuthWrapperState extends State<AuthWrapper> {
   final LocalAuthentication _localAuth = LocalAuthentication();
   bool _isBiometricChecked = false;
   bool _biometricAuthRequired = false;
+  String _authMessage = 'Checking authentication...';
 
   @override
   void initState() {
     super.initState();
-    _checkBiometricAuth();
+    _checkAuthentication();
   }
 
-  Future<void> _checkBiometricAuth() async {
+  Future<void> _checkAuthentication() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      final prefs = await SharedPreferences.getInstance();
-      final lastLogin = prefs.getInt('last_login') ?? 0;
-      final now = DateTime.now().millisecondsSinceEpoch;
-
-      setState(() => _biometricAuthRequired = true);
-
-      final authenticated = await _authenticateWithBiometrics();
-      if (!authenticated) {
-        await FirebaseAuth.instance.signOut();
-        await prefs.remove('last_login');
-        setState(() => _biometricAuthRequired = false);
-      } else {
-        await prefs.setInt('last_login', now);
-        setState(() => _biometricAuthRequired = false);
-      }
+    if (user == null) {
+      setState(() {
+        _isBiometricChecked = true;
+        _biometricAuthRequired = false;
+      });
+      return;
     }
 
-    setState(() => _isBiometricChecked = true);
+    final prefs = await SharedPreferences.getInstance();
+    final lastLogin = prefs.getInt('last_login') ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const authTimeout = 24 * 60 * 60 * 1000;
+
+    if (now - lastLogin > authTimeout) {
+      setState(() => _biometricAuthRequired = true);
+      final authenticated = await _authenticateUser();
+      if (authenticated) {
+        await prefs.setInt('last_login', now);
+        setState(() {
+          _biometricAuthRequired = false;
+          _isBiometricChecked = true;
+          _authMessage = 'Authenticated successfully';
+        });
+      } else {
+        await FirebaseAuth.instance.signOut();
+        await prefs.remove('last_login');
+        setState(() {
+          _biometricAuthRequired = false;
+          _isBiometricChecked = true;
+          _authMessage = 'Authentication failed. Please log in again.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_authMessage), backgroundColor: warningColor),
+        );
+      }
+    } else {
+      setState(() {
+        _isBiometricChecked = true;
+        _biometricAuthRequired = false;
+        _authMessage = 'Recent login detected';
+      });
+    }
   }
 
-  Future<bool> _authenticateWithBiometrics() async {
+  Future<bool> _authenticateUser() async {
     try {
-      final canAuthenticate = await _localAuth.canCheckBiometrics;
-      if (!canAuthenticate) return true;
+      bool canUseBiometrics = await _localAuth.canCheckBiometrics;
+      bool isDeviceSupported = await _localAuth.isDeviceSupported();
 
-      final isAvailable = await _localAuth.isDeviceSupported();
-      if (!isAvailable) return true;
+      if (!isDeviceSupported) {
+        setState(() => _authMessage = 'Device does not support authentication');
+        return true;
+      }
 
-      final result = await _localAuth.authenticate(
-        localizedReason: 'Authenticate to access the attendance app',
-        options: const AuthenticationOptions(
-          useErrorDialogs: true,
-          stickyAuth: true,
-          biometricOnly: false,
-        ),
-      );
+      if (canUseBiometrics) {
+        setState(() => _authMessage = 'Please authenticate using biometrics');
+        bool didAuthenticate = await _localAuth.authenticate(
+          localizedReason:
+              'Use your fingerprint, face, or device passcode to access the app',
+          options: const AuthenticationOptions(
+            biometricOnly: false,
+            stickyAuth: true,
+            useErrorDialogs: true,
+          ),
+        );
 
-      return result;
+        if (didAuthenticate) return true;
+
+        setState(() => _authMessage = 'Biometric authentication failed');
+        didAuthenticate = await _localAuth.authenticate(
+          localizedReason: 'Please enter your device passcode',
+          options: const AuthenticationOptions(
+            biometricOnly: false,
+            stickyAuth: true,
+            useErrorDialogs: true,
+          ),
+        );
+        return didAuthenticate;
+      } else {
+        setState(() => _authMessage = 'Please enter your device passcode');
+        bool didAuthenticate = await _localAuth.authenticate(
+          localizedReason: 'Please enter your device PIN, pattern, or password',
+          options: const AuthenticationOptions(
+            biometricOnly: false,
+            stickyAuth: true,
+            useErrorDialogs: true,
+          ),
+        );
+        return didAuthenticate;
+      }
     } catch (e) {
-      return true;
+      setState(() => _authMessage = 'Authentication error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_authMessage), backgroundColor: warningColor),
+      );
+      return false;
     }
   }
 
@@ -224,15 +359,19 @@ class _AuthWrapperState extends State<AuthWrapper> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.fingerprint, size: 64, color: Colors.white),
-              SizedBox(height: 20),
-              if (_biometricAuthRequired)
-                Text(
-                  'Please authenticate to continue...',
-                  style: TextStyle(fontSize: 16, color: Colors.white),
+              const Icon(Icons.fingerprint, size: 64, color: Colors.white),
+              const SizedBox(height: 20),
+              Text(
+                _authMessage,
+                style: const TextStyle(
+                  fontSize: 16,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
                 ),
-              SizedBox(height: 20),
-              CircularProgressIndicator(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              const CircularProgressIndicator(color: Colors.white),
             ],
           ),
         ),
@@ -243,12 +382,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return Scaffold(
+          return const Scaffold(
             backgroundColor: primaryColor,
             body: Center(child: CircularProgressIndicator(color: Colors.white)),
           );
         }
-        return snapshot.hasData ? HomeScreen() : LoginScreen();
+        return snapshot.hasData ? const HomeScreen() : const LoginScreen();
       },
     );
   }
@@ -306,7 +445,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -315,23 +454,22 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         child: Center(
           child: SingleChildScrollView(
-            padding: EdgeInsets.all(24),
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Logo and Title
                 Container(
-                  padding: EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
+                    color: Colors.white10,
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Column(
+                  child: const Column(
                     children: [
                       Icon(Icons.school, size: 64, color: Colors.white),
                       SizedBox(height: 16),
                       Text(
-                        'ATTENDANCE PRO',
+                        'ATTENDANCE SYSTEM',
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
@@ -342,25 +480,20 @@ class _LoginScreenState extends State<LoginScreen> {
                       SizedBox(height: 8),
                       Text(
                         'Smart Attendance Management',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.white.withOpacity(0.8),
-                        ),
+                        style: TextStyle(fontSize: 16, color: Colors.white70),
                       ),
                     ],
                   ),
                 ),
-                SizedBox(height: 40),
-
-                // Login Form
+                const SizedBox(height: 40),
                 Container(
-                  padding: EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
                     color: cardColor,
                     borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
+                    boxShadow: const [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
+                        color: Colors.black12,
                         blurRadius: 20,
                         offset: Offset(0, 10),
                       ),
@@ -372,7 +505,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         'Welcome Back',
                         style: Theme.of(context).textTheme.displaySmall,
                       ),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text(
                         'Sign in to continue',
                         style: TextStyle(
@@ -380,26 +513,25 @@ class _LoginScreenState extends State<LoginScreen> {
                           fontSize: 16,
                         ),
                       ),
-                      SizedBox(height: 24),
-
-                      // Email Field
+                      const SizedBox(height: 24),
                       TextField(
                         controller: emailController,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'Email',
                           prefixIcon: Icon(Icons.email, color: primaryColor),
                         ),
                         keyboardType: TextInputType.emailAddress,
                       ),
-                      SizedBox(height: 16),
-
-                      // Password Field
+                      const SizedBox(height: 16),
                       TextField(
                         controller: passController,
                         obscureText: _obscurePassword,
                         decoration: InputDecoration(
                           labelText: 'Password',
-                          prefixIcon: Icon(Icons.lock, color: primaryColor),
+                          prefixIcon: const Icon(
+                            Icons.lock,
+                            color: primaryColor,
+                          ),
                           suffixIcon: IconButton(
                             icon: Icon(
                               _obscurePassword
@@ -407,31 +539,22 @@ class _LoginScreenState extends State<LoginScreen> {
                                   : Icons.visibility_off,
                               color: primaryColor,
                             ),
-                            onPressed: () {
-                              setState(
-                                () => _obscurePassword = !_obscurePassword,
-                              );
-                            },
+                            onPressed: () => setState(
+                              () => _obscurePassword = !_obscurePassword,
+                            ),
                           ),
                         ),
                       ),
-                      SizedBox(height: 24),
-
-                      // Login Button
+                      const SizedBox(height: 24),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: _isLoading ? null : login,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: primaryColor,
-                            padding: EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
                           child: _isLoading
-                              ? CircularProgressIndicator(color: Colors.white)
-                              : Text(
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white,
+                                )
+                              : const Text(
                                   'LOGIN',
                                   style: TextStyle(
                                     fontSize: 16,
@@ -443,8 +566,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                 ),
-
-                SizedBox(height: 20),
+                const SizedBox(height: 20),
                 Text(
                   'All registered users can login',
                   style: TextStyle(
@@ -461,8 +583,30 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  _HomeScreenState createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool _isUpdateAvailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkForUpdates();
+  }
+
+  Future<void> _checkForUpdates() async {
+    final bool updateAvailable = await UpdateManager.isUpdateAvailable();
+    if (mounted) {
+      setState(() {
+        _isUpdateAvailable = updateAvailable;
+      });
+    }
+  }
 
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
@@ -476,34 +620,40 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Attendance Pro'),
+        title: const Text('Attendance System'),
         actions: [
+          if (_isUpdateAvailable)
+            IconButton(
+              onPressed: () =>
+                  UpdateManager.openReleasesPage(context), // Pass context
+              icon: const Icon(Icons.system_update),
+              tooltip: 'Update Available',
+            ),
           IconButton(
             onPressed: logout,
-            icon: Icon(Icons.logout),
+            icon: const Icon(Icons.logout),
             tooltip: 'Logout',
           ),
         ],
       ),
       body: Padding(
-        padding: EdgeInsets.all(24),
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Welcome Section
             Container(
               width: double.infinity,
-              padding: EdgeInsets.all(24),
+              padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
+                gradient: const LinearGradient(
                   colors: [primaryColor, secondaryColor],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(20),
-                boxShadow: [
+                boxShadow: const [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black26,
                     blurRadius: 10,
                     offset: Offset(0, 5),
                   ),
@@ -519,16 +669,16 @@ class HomeScreen extends StatelessWidget {
                       color: Colors.white.withOpacity(0.8),
                     ),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
-                    user?.email ?? 'User ',
-                    style: TextStyle(
+                    user?.email ?? 'User',
+                    style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                     ),
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   Text(
                     'Manage student attendance efficiently',
                     style: TextStyle(color: Colors.white.withOpacity(0.8)),
@@ -536,18 +686,15 @@ class HomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-            SizedBox(height: 32),
-
-            // Action Cards
+            const SizedBox(height: 32),
             Text(
               'Quick Actions',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            SizedBox(height: 16),
-
+            const SizedBox(height: 16),
             Expanded(
               child: GridView(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   crossAxisSpacing: 16,
                   mainAxisSpacing: 16,
@@ -561,7 +708,7 @@ class HomeScreen extends StatelessWidget {
                     color: successColor,
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => AttendancePage()),
+                      MaterialPageRoute(builder: (_) => const AttendancePage()),
                     ),
                   ),
                   _buildActionCard(
@@ -571,23 +718,25 @@ class HomeScreen extends StatelessWidget {
                     color: accentColor,
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => ViewAttendancePage()),
+                      MaterialPageRoute(
+                        builder: (_) => const ViewAttendancePage(),
+                      ),
                     ),
                   ),
-                  _buildActionCard(
-                    context,
-                    icon: Icons.bar_chart,
-                    title: 'Reports &\nAnalytics',
-                    color: warningColor,
-                    onTap: () {},
-                  ),
-                  _buildActionCard(
-                    context,
-                    icon: Icons.settings,
-                    title: 'Settings &\nPreferences',
-                    color: primaryColor,
-                    onTap: () {},
-                  ),
+                  // _buildActionCard(
+                  //   context,
+                  //   icon: Icons.bar_chart,
+                  //   title: 'Reports &\nAnalytics',
+                  //   color: warningColor,
+                  //   onTap: () {},
+                  // ),
+                  // _buildActionCard(
+                  //   context,
+                  //   icon: Icons.settings,
+                  //   title: 'Settings &\nPreferences',
+                  //   color: primaryColor,
+                  //   onTap: () {},
+                  // ),
                 ],
               ),
             ),
@@ -611,7 +760,7 @@ class HomeScreen extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
-          padding: EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(
@@ -624,18 +773,18 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                padding: EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.2),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(icon, size: 32, color: color),
               ),
-              SizedBox(height: 12),
+              const SizedBox(height: 12),
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: textColor,
                   fontSize: 14,
@@ -647,6 +796,57 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget _buildActionCard(
+  BuildContext context, {
+  required IconData icon,
+  required String title,
+  required Color color,
+  required VoidCallback onTap,
+}) {
+  return Card(
+    elevation: 4,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [color.withOpacity(0.1), color.withOpacity(0.2)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 32, color: color),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: textColor,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 enum AttendanceStatus { present, absent, od }
@@ -661,8 +861,7 @@ class AttendancePage extends StatefulWidget {
 class _AttendancePageState extends State<AttendancePage> {
   DateTime selectedDate = DateTime.now();
   Map<String, AttendanceStatus> attendanceStatus = {};
-  Map<String, String> odType =
-      {}; // Tracks 'internal' or 'external' for OD students
+  Map<String, String> odType = {};
   bool _isLoading = false;
 
   @override
@@ -684,7 +883,7 @@ class _AttendancePageState extends State<AttendancePage> {
       builder: (context, child) {
         return Theme(
           data: ThemeData.light().copyWith(
-            colorScheme: ColorScheme.light(
+            colorScheme: const ColorScheme.light(
               primary: primaryColor,
               onPrimary: Colors.white,
             ),
@@ -784,7 +983,7 @@ class _AttendancePageState extends State<AttendancePage> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Attendance submitted successfully!'),
+        content: const Text('Attendance submitted successfully!'),
         backgroundColor: successColor,
       ),
     );
@@ -821,7 +1020,7 @@ class _AttendancePageState extends State<AttendancePage> {
         'II AIDS-E\n'
         '$dateFormatted\n'
         'Absentees: $absentsStr\n'
-        'Present Count: $presentCount\n'
+        'Present Count: ${presentCount + internalODCount + externalODCount}\n'
         'Internal OD: $internalODStr\n'
         'Internal OD Count: $internalODCount\n'
         'External OD: $externalODStr\n'
@@ -845,7 +1044,7 @@ class _AttendancePageState extends State<AttendancePage> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
+          content: const Text(
             'WhatsApp is not installed and WhatsApp Web cannot be opened.',
           ),
           backgroundColor: warningColor,
@@ -857,29 +1056,26 @@ class _AttendancePageState extends State<AttendancePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Mark Attendance')),
+      appBar: AppBar(title: const Text('Mark Attendance')),
       body: Column(
         children: [
           Card(
-            margin: EdgeInsets.all(16),
+            margin: const EdgeInsets.all(16),
             child: Padding(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
+                  const Text(
                     'Selected Date:',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   ElevatedButton(
                     onPressed: () => selectDate(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                    ),
                     child: Row(
                       children: [
-                        Icon(Icons.calendar_today, size: 16),
-                        SizedBox(width: 8),
+                        const Icon(Icons.calendar_today, size: 16),
+                        const SizedBox(width: 8),
                         Text(DateFormat('dd MMM yyyy').format(selectedDate)),
                       ],
                     ),
@@ -890,7 +1086,7 @@ class _AttendancePageState extends State<AttendancePage> {
           ),
           Expanded(
             child: _isLoading
-                ? Center(child: CircularProgressIndicator())
+                ? const Center(child: CircularProgressIndicator())
                 : ListView.builder(
                     itemCount: students.length,
                     itemBuilder: (context, index) {
@@ -925,9 +1121,9 @@ class _AttendancePageState extends State<AttendancePage> {
                         direction: DismissDirection.horizontal,
                         background: Container(
                           alignment: Alignment.centerLeft,
-                          padding: EdgeInsets.symmetric(horizontal: 20),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
                           color: accentColor,
-                          child: Row(
+                          child: const Row(
                             children: [
                               Icon(Icons.directions_run, color: Colors.white),
                               SizedBox(width: 8),
@@ -943,9 +1139,9 @@ class _AttendancePageState extends State<AttendancePage> {
                         ),
                         secondaryBackground: Container(
                           alignment: Alignment.centerRight,
-                          padding: EdgeInsets.symmetric(horizontal: 20),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
                           color: successColor,
-                          child: Row(
+                          child: const Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
                               Text(
@@ -991,7 +1187,7 @@ class _AttendancePageState extends State<AttendancePage> {
                           return false;
                         },
                         child: Card(
-                          margin: EdgeInsets.symmetric(
+                          margin: const EdgeInsets.symmetric(
                             horizontal: 16,
                             vertical: 4,
                           ),
@@ -1006,7 +1202,9 @@ class _AttendancePageState extends State<AttendancePage> {
                             ),
                             title: Text(
                               student['name']!,
-                              style: TextStyle(fontWeight: FontWeight.w500),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                             subtitle: Text('Reg: $reg'),
                             trailing: Switch(
@@ -1047,12 +1245,12 @@ class _AttendancePageState extends State<AttendancePage> {
                   ),
           ),
           Container(
-            padding: EdgeInsets.all(16),
-            decoration: BoxDecoration(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
               color: cardColor,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
+                  color: Colors.black12,
                   blurRadius: 10,
                   offset: Offset(0, -5),
                 ),
@@ -1062,13 +1260,9 @@ class _AttendancePageState extends State<AttendancePage> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _isLoading ? null : submitAttendance,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryColor,
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                ),
                 child: _isLoading
-                    ? CircularProgressIndicator(color: Colors.white)
-                    : Text(
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text(
                         'SUBMIT ATTENDANCE',
                         style: TextStyle(
                           fontSize: 16,
@@ -1105,7 +1299,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
       builder: (context, child) {
         return Theme(
           data: ThemeData.light().copyWith(
-            colorScheme: ColorScheme.light(
+            colorScheme: const ColorScheme.light(
               primary: primaryColor,
               onPrimary: Colors.white,
             ),
@@ -1114,9 +1308,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
         );
       },
     );
-    if (picked != null) {
-      setState(() => fromDate = picked);
-    }
+    if (picked != null) setState(() => fromDate = picked);
   }
 
   Future<void> _selectToDate(BuildContext context) async {
@@ -1128,7 +1320,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
       builder: (context, child) {
         return Theme(
           data: ThemeData.light().copyWith(
-            colorScheme: ColorScheme.light(
+            colorScheme: const ColorScheme.light(
               primary: primaryColor,
               onPrimary: Colors.white,
             ),
@@ -1137,20 +1329,18 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
         );
       },
     );
-    if (picked != null) {
-      setState(() => toDate = picked);
-    }
+    if (picked != null) setState(() => toDate = picked);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('View Attendance Records'),
+        title: const Text('View Attendance Records'),
         backgroundColor: primaryColor,
       ),
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -1158,7 +1348,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
           ),
         ),
         child: Padding(
-          padding: EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1168,20 +1358,20 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Padding(
-                  padding: EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
-                      Icon(Icons.calendar_month, size: 48, color: primaryColor),
-                      SizedBox(height: 12),
+                      const Icon(
+                        Icons.calendar_month,
+                        size: 48,
+                        color: primaryColor,
+                      ),
+                      const SizedBox(height: 12),
                       Text(
                         'Attendance Records',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                        ),
+                        style: Theme.of(context).textTheme.displaySmall,
                       ),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text(
                         'View and analyze attendance data',
                         style: TextStyle(color: textColor.withOpacity(0.6)),
@@ -1190,18 +1380,18 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                   ),
                 ),
               ),
-              SizedBox(height: 24),
+              const SizedBox(height: 24),
               Card(
                 elevation: 3,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Padding(
-                  padding: EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      const Row(
                         children: [
                           Icon(Icons.date_range, color: primaryColor, size: 20),
                           SizedBox(width: 8),
@@ -1214,7 +1404,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                           ),
                         ],
                       ),
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       Row(
                         children: [
                           Checkbox(
@@ -1222,19 +1412,16 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                             onChanged: (value) {
                               setState(() {
                                 useDateRange = value ?? false;
-                                if (!useDateRange) {
-                                  fromDate = null;
-                                  toDate = null;
-                                }
+                                if (!useDateRange) fromDate = toDate = null;
                               });
                             },
                             activeColor: primaryColor,
                           ),
-                          Text('Use Date Range'),
+                          const Text('Use Date Range'),
                         ],
                       ),
                       if (useDateRange) ...[
-                        SizedBox(height: 16),
+                        const SizedBox(height: 16),
                         Row(
                           children: [
                             Expanded(
@@ -1245,14 +1432,14 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                                   foregroundColor: primaryColor,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
-                                    side: BorderSide(color: primaryColor),
+                                    side: const BorderSide(color: primaryColor),
                                   ),
                                 ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.calendar_today, size: 16),
-                                    SizedBox(width: 8),
+                                    const Icon(Icons.calendar_today, size: 16),
+                                    const SizedBox(width: 8),
                                     Text(
                                       fromDate == null
                                           ? 'From Date'
@@ -1264,7 +1451,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                                 ),
                               ),
                             ),
-                            SizedBox(width: 12),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: ElevatedButton(
                                 onPressed: () => _selectToDate(context),
@@ -1273,14 +1460,14 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                                   foregroundColor: primaryColor,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
-                                    side: BorderSide(color: primaryColor),
+                                    side: const BorderSide(color: primaryColor),
                                   ),
                                 ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.calendar_today, size: 16),
-                                    SizedBox(width: 8),
+                                    const Icon(Icons.calendar_today, size: 16),
+                                    const SizedBox(width: 8),
                                     Text(
                                       toDate == null
                                           ? 'To Date'
@@ -1297,7 +1484,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                         if (fromDate != null &&
                             toDate != null &&
                             fromDate!.isAfter(toDate!))
-                          Padding(
+                          const Padding(
                             padding: EdgeInsets.only(top: 8),
                             child: Text(
                               'From date cannot be after to date',
@@ -1312,12 +1499,12 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                   ),
                 ),
               ),
-              SizedBox(height: 32),
+              const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: () {
                   if (useDateRange && (fromDate == null || toDate == null)) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
+                      const SnackBar(
                         content: Text('Please select both from and to dates'),
                         backgroundColor: warningColor,
                       ),
@@ -1326,7 +1513,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                   }
                   if (useDateRange && fromDate!.isAfter(toDate!)) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
+                      const SnackBar(
                         content: Text('From date cannot be after to date'),
                         backgroundColor: warningColor,
                       ),
@@ -1344,14 +1531,7 @@ class _ViewAttendancePageState extends State<ViewAttendancePage> {
                     ),
                   );
                 },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryColor,
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: Text(
+                child: const Text(
                   'VIEW ATTENDANCE',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
@@ -1394,16 +1574,17 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
     final query = await FirebaseFirestore.instance
         .collection('absent_attendance')
         .get();
-
     final allDates = query.docs.map((doc) => doc.id).toList()..sort();
 
     if (widget.fromDate != null && widget.toDate != null) {
       final fromStr = DateFormat('yyyy-MM-dd').format(widget.fromDate!);
       final toStr = DateFormat('yyyy-MM-dd').format(widget.toDate!);
-
-      filteredDates = allDates.where((date) {
-        return date.compareTo(fromStr) >= 0 && date.compareTo(toStr) <= 0;
-      }).toList();
+      filteredDates = allDates
+          .where(
+            (date) =>
+                date.compareTo(fromStr) >= 0 && date.compareTo(toStr) <= 0,
+          )
+          .toList();
     } else {
       filteredDates = allDates;
     }
@@ -1430,20 +1611,12 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
     for (final student in students) {
       final reg = student['reg']!;
       int absentCount = 0;
-      int odCount = 0;
 
       for (final date in filteredDates) {
-        if (dateToAbsents[date]?.contains(reg) ?? false) {
-          absentCount++;
-        }
-        final isInternalOD = dateToInternalODs[date]?.contains(reg) ?? false;
-        final isExternalOD = dateToExternalODs[date]?.contains(reg) ?? false;
-        if (isInternalOD || isExternalOD) {
-          odCount++;
-        }
+        if (dateToAbsents[date]?.contains(reg) ?? false) absentCount++;
       }
 
-      final present = totalDaysInRange - absentCount - odCount;
+      final present = totalDaysInRange - absentCount;
       final percentage = totalDaysInRange > 0
           ? (present / totalDaysInRange * 100).toStringAsFixed(2)
           : '0.00';
@@ -1453,7 +1626,6 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
         'total_days': totalDaysInRange,
         'present': present,
         'absent': absentCount,
-        'od': odCount,
         'percentage': percentage,
       };
     }
@@ -1478,15 +1650,11 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
       final row = [
         reg,
         name,
-        ...filteredDates.map((date) {
-          final isAbsent = dateToAbsents[date]?.contains(reg) ?? false;
-          final isInternalOD = dateToInternalODs[date]?.contains(reg) ?? false;
-          final isExternalOD = dateToExternalODs[date]?.contains(reg) ?? false;
-          if (isAbsent) return 'Absent';
-          if (isInternalOD) return 'Internal OD';
-          if (isExternalOD) return 'External OD';
-          return 'Present';
-        }),
+        ...filteredDates.map(
+          (date) => dateToAbsents[date]?.contains(reg) ?? false
+              ? 'Absent'
+              : 'Present',
+        ),
       ];
       csvBuffer.writeln(row.join(','));
     }
@@ -1519,12 +1687,8 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
       int internalODCount = 0;
       int externalODCount = 0;
       for (final date in filteredDates) {
-        if (dateToInternalODs[date]?.contains(reg) ?? false) {
-          internalODCount++;
-        }
-        if (dateToExternalODs[date]?.contains(reg) ?? false) {
-          externalODCount++;
-        }
+        if (dateToInternalODs[date]?.contains(reg) ?? false) internalODCount++;
+        if (dateToExternalODs[date]?.contains(reg) ?? false) externalODCount++;
       }
       final totalOD = internalODCount + externalODCount;
       final totalDays = filteredDates.length;
@@ -1553,7 +1717,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
 
   Future<void> exportAndShareSummaryCSV() async {
     final csvBuffer = StringBuffer();
-    csvBuffer.writeln('Reg No,Name,Total Days,Present,Absent,OD,Percentage');
+    csvBuffer.writeln('Reg No,Name,Total Days,Present,Absent,Percentage');
 
     for (final student in students) {
       final reg = student['reg']!;
@@ -1566,13 +1730,12 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
             'total_days': 0,
             'present': 0,
             'absent': 0,
-            'od': 0,
             'percentage': '0.00',
             'name': student['name'],
           };
 
       csvBuffer.writeln(
-        '$reg,$name,${data['total_days']},${data['present']},${data['absent']},${data['od']},${data['percentage']}',
+        '$reg,$name,${data['total_days']},${data['present']},${data['absent']},${data['percentage']}',
       );
     }
 
@@ -1602,7 +1765,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
         appBar: AppBar(
           title: Text('Attendance - $rangeText'),
           backgroundColor: primaryColor,
-          bottom: TabBar(
+          bottom: const TabBar(
             indicatorColor: Colors.white,
             labelStyle: TextStyle(fontWeight: FontWeight.bold),
             tabs: [
@@ -1613,14 +1776,14 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
           ),
           actions: [
             IconButton(
-              icon: Icon(Icons.refresh),
               onPressed: loadData,
+              icon: const Icon(Icons.refresh),
               tooltip: 'Refresh',
             ),
           ],
         ),
         body: _isLoading
-            ? Center(
+            ? const Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1631,7 +1794,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                 ),
               )
             : Container(
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
@@ -1657,7 +1820,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.inbox, size: 64, color: textColor.withOpacity(0.3)),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             Text(
               'No data available for selected range',
               style: TextStyle(fontSize: 16, color: textColor.withOpacity(0.6)),
@@ -1670,25 +1833,22 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
     return Column(
       children: [
         Card(
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Icon(Icons.calendar_today, color: primaryColor),
-                SizedBox(width: 12),
+                const Icon(Icons.calendar_today, color: primaryColor),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'Date Range: $rangeText',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
                 ElevatedButton(
                   onPressed: exportAndShareAbsentSheetCSV,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                  ),
-                  child: Row(
+                  child: const Row(
                     children: [
                       Icon(Icons.share, size: 16),
                       SizedBox(width: 8),
@@ -1702,7 +1862,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
         ),
         Expanded(
           child: Card(
-            margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: SingleChildScrollView(
               scrollDirection: Axis.vertical,
               child: SingleChildScrollView(
@@ -1712,13 +1872,13 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     (Set<WidgetState> states) => primaryColor.withOpacity(0.1),
                   ),
                   columns: [
-                    DataColumn(
+                    const DataColumn(
                       label: Text(
                         'Reg No',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
-                    DataColumn(
+                    const DataColumn(
                       label: Text(
                         'Name',
                         style: TextStyle(fontWeight: FontWeight.bold),
@@ -1728,7 +1888,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                       (date) => DataColumn(
                         label: Text(
                           DateFormat('dd-MM-yy').format(DateTime.parse(date)),
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -1738,62 +1898,37 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     return DataRow(
                       cells: [
                         DataCell(
-                          Text(reg, style: TextStyle(fontFamily: 'monospace')),
-                        ),
-                        DataCell(Text(student['name']!)),
-                        ...filteredDates.map(
-                          (date) => DataCell(
-                            Builder(
-                              builder: (context) {
-                                final isAbsent =
-                                    dateToAbsents[date]?.contains(reg) ?? false;
-                                final isInternalOD =
-                                    dateToInternalODs[date]?.contains(reg) ??
-                                    false;
-                                final isExternalOD =
-                                    dateToExternalODs[date]?.contains(reg) ??
-                                    false;
-                                String status;
-                                Color? bg;
-                                Color? fg;
-                                if (isAbsent) {
-                                  status = 'Absent';
-                                  bg = warningColor.withOpacity(0.2);
-                                  fg = warningColor;
-                                } else if (isInternalOD) {
-                                  status = 'Internal OD';
-                                  bg = accentColor.withOpacity(0.2);
-                                  fg = accentColor;
-                                } else if (isExternalOD) {
-                                  status = 'External OD';
-                                  bg = accentColor.withOpacity(0.2);
-                                  fg = accentColor;
-                                } else {
-                                  status = 'Present';
-                                  bg = successColor.withOpacity(0.2);
-                                  fg = successColor;
-                                }
-                                return Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: bg,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    status,
-                                    style: TextStyle(
-                                      color: fg,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
+                          Text(
+                            reg,
+                            style: const TextStyle(fontFamily: 'monospace'),
                           ),
                         ),
+                        DataCell(Text(student['name']!)),
+                        ...filteredDates.map((date) {
+                          final isAbsent =
+                              dateToAbsents[date]?.contains(reg) ?? false;
+                          return DataCell(
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isAbsent
+                                    ? warningColor.withOpacity(0.2)
+                                    : successColor.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                isAbsent ? 'Absent' : 'Present',
+                                style: TextStyle(
+                                  color: isAbsent ? warningColor : successColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
                       ],
                     );
                   }).toList(),
@@ -1813,7 +1948,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.inbox, size: 64, color: textColor.withOpacity(0.3)),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             Text(
               'No data available for selected range',
               style: TextStyle(fontSize: 16, color: textColor.withOpacity(0.6)),
@@ -1826,25 +1961,22 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
     return Column(
       children: [
         Card(
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Icon(Icons.directions_run, color: primaryColor),
-                SizedBox(width: 12),
+                const Icon(Icons.directions_run, color: primaryColor),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'OD Summary - $rangeText',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
                 ElevatedButton(
                   onPressed: exportAndShareODSheetCSV,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                  ),
-                  child: Row(
+                  child: const Row(
                     children: [
                       Icon(Icons.share, size: 16),
                       SizedBox(width: 8),
@@ -1857,7 +1989,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
           ),
         ),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               _buildStatCard(
@@ -1865,7 +1997,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                 filteredDates.length.toString(),
                 primaryColor,
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               _buildStatCard(
                 'Students',
                 students.length.toString(),
@@ -1874,10 +2006,10 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
             ],
           ),
         ),
-        SizedBox(height: 16),
+        const SizedBox(height: 16),
         Expanded(
           child: Card(
-            margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: SingleChildScrollView(
               scrollDirection: Axis.vertical,
               child: SingleChildScrollView(
@@ -1886,7 +2018,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                   headingRowColor: WidgetStateProperty.resolveWith<Color>(
                     (Set<WidgetState> states) => primaryColor.withOpacity(0.1),
                   ),
-                  columns: [
+                  columns: const [
                     DataColumn(
                       label: Text(
                         'Reg No',
@@ -1935,12 +2067,10 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     int internalODCount = 0;
                     int externalODCount = 0;
                     for (final date in filteredDates) {
-                      if (dateToInternalODs[date]?.contains(reg) ?? false) {
+                      if (dateToInternalODs[date]?.contains(reg) ?? false)
                         internalODCount++;
-                      }
-                      if (dateToExternalODs[date]?.contains(reg) ?? false) {
+                      if (dateToExternalODs[date]?.contains(reg) ?? false)
                         externalODCount++;
-                      }
                     }
                     final totalOD = internalODCount + externalODCount;
                     final totalDays = filteredDates.length;
@@ -1950,7 +2080,10 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     return DataRow(
                       cells: [
                         DataCell(
-                          Text(reg, style: TextStyle(fontFamily: 'monospace')),
+                          Text(
+                            reg,
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
                         ),
                         DataCell(Text(student['name']!)),
                         DataCell(Text(totalDays.toString())),
@@ -1979,28 +2112,41 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
   }
 
   Widget _buildSummaryView(String rangeText) {
+    if (filteredDates.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox, size: 64, color: textColor.withOpacity(0.3)),
+            const SizedBox(height: 16),
+            Text(
+              'No data available for selected range',
+              style: TextStyle(fontSize: 16, color: textColor.withOpacity(0.6)),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       children: [
         Card(
-          margin: EdgeInsets.all(16),
+          margin: const EdgeInsets.all(16),
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Icon(Icons.analytics, color: primaryColor),
-                SizedBox(width: 12),
+                const Icon(Icons.analytics, color: primaryColor),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'Summary - $rangeText',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
                 ElevatedButton(
                   onPressed: exportAndShareSummaryCSV,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                  ),
-                  child: Row(
+                  child: const Row(
                     children: [
                       Icon(Icons.share, size: 16),
                       SizedBox(width: 8),
@@ -2013,7 +2159,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
           ),
         ),
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               _buildStatCard(
@@ -2022,7 +2168,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     '0',
                 primaryColor,
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               _buildStatCard(
                 'Students',
                 students.length.toString(),
@@ -2031,10 +2177,10 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
             ],
           ),
         ),
-        SizedBox(height: 16),
+        const SizedBox(height: 16),
         Expanded(
           child: Card(
-            margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: SingleChildScrollView(
               scrollDirection: Axis.vertical,
               child: SingleChildScrollView(
@@ -2043,7 +2189,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                   headingRowColor: WidgetStateProperty.resolveWith<Color>(
                     (Set<WidgetState> states) => primaryColor.withOpacity(0.1),
                   ),
-                  columns: [
+                  columns: const [
                     DataColumn(
                       label: Text(
                         'Reg No',
@@ -2076,12 +2222,6 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     ),
                     DataColumn(
                       label: Text(
-                        'OD',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    DataColumn(
-                      label: Text(
                         'Percentage',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
@@ -2095,8 +2235,8 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                           'total_days': 0,
                           'present': 0,
                           'absent': 0,
-                          'od': 0,
                           'percentage': '0.00',
+                          'name': student['name'],
                         };
 
                     final percentage =
@@ -2110,13 +2250,15 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                     return DataRow(
                       cells: [
                         DataCell(
-                          Text(reg, style: TextStyle(fontFamily: 'monospace')),
+                          Text(
+                            reg,
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
                         ),
                         DataCell(Text(student['name']!)),
                         DataCell(Text(data['total_days'].toString())),
                         DataCell(Text(data['present'].toString())),
                         DataCell(Text(data['absent'].toString())),
-                        DataCell(Text(data['od'].toString())),
                         DataCell(
                           Text(
                             '${data['percentage']}%',
@@ -2143,7 +2285,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
       child: Card(
         color: color.withOpacity(0.1),
         child: Padding(
-          padding: EdgeInsets.all(12),
+          padding: const EdgeInsets.all(12),
           child: Column(
             children: [
               Text(
@@ -2154,7 +2296,7 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
                   color: color,
                 ),
               ),
-              SizedBox(height: 4),
+              const SizedBox(height: 4),
               Text(
                 title,
                 style: TextStyle(
