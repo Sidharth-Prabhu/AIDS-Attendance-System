@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:attendance_system/screens/database_manager_screen.dart';
 import 'package:attendance_system/screens/date_summary_screen.dart';
-import 'package:attendance_system/screens/today_summary_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // FCM
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -18,7 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // Import the new Student model
-import 'models/student.dart'; // <-- NEW: Uses your updated list with email & phone
+import 'models/student.dart';
 
 // Color Scheme
 const Color primaryColor = Color(0xFF4361EE);
@@ -30,14 +30,60 @@ const Color backgroundColor = Color(0xFFF8F9FA);
 const Color cardColor = Color(0xFFFFFFFF);
 const Color textColor = Color(0xFF212529);
 
+// FCM Background Handler (must be top-level)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  debugPrint('FCM Background: ${message.messageId}');
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+
+  // FCM: Initialize background handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+    _setupFCM();
+  }
+
+  Future<void> _setupFCM() async {
+    final messaging = FirebaseMessaging.instance;
+
+    // Request permission (iOS)
+    await messaging.requestPermission();
+
+    // Get FCM token (for Firebase Console testing)
+    final token = await messaging.getToken();
+    debugPrint('FCM Token: $token');
+
+    // Subscribe to topic (optional)
+    await messaging.subscribeToTopic('attendance_updates');
+
+    // Foreground messages
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      debugPrint('FCM Foreground: ${message.notification?.title}');
+    });
+
+    // Handle tap (background/terminated)
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      debugPrint('FCM Tap: ${message.data}');
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
