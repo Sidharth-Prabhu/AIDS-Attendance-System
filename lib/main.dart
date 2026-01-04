@@ -179,6 +179,7 @@ class UpdateManager {
         await launchUrl(url, mode: LaunchMode.externalApplication);
       }
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to open releases. Visit: $releasesUrl'),
@@ -198,7 +199,6 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   final LocalAuthentication _localAuth = LocalAuthentication();
   bool _isBiometricChecked = false;
-  bool _biometricAuthRequired = false;
   String _authMessage = 'Checking authentication...';
 
   @override
@@ -212,7 +212,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (user == null) {
       setState(() {
         _isBiometricChecked = true;
-        _biometricAuthRequired = false;
       });
       return;
     }
@@ -223,12 +222,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
     const authTimeout = 24 * 60 * 60 * 1000;
 
     if (now - lastLogin > authTimeout) {
-      setState(() => _biometricAuthRequired = true);
+      setState(() {
+        _authMessage = 'Biometric authentication required...';
+      });
       final authenticated = await _authenticateUser();
       if (authenticated) {
         await prefs.setInt('last_login', now);
         setState(() {
-          _biometricAuthRequired = false;
           _isBiometricChecked = true;
           _authMessage = 'Authenticated successfully';
         });
@@ -236,10 +236,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
         await FirebaseAuth.instance.signOut();
         await prefs.remove('last_login');
         setState(() {
-          _biometricAuthRequired = false;
           _isBiometricChecked = true;
           _authMessage = 'Authentication failed. Please log in again.';
         });
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_authMessage), backgroundColor: warningColor),
         );
@@ -247,7 +247,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
     } else {
       setState(() {
         _isBiometricChecked = true;
-        _biometricAuthRequired = false;
         _authMessage = 'Recent login detected';
       });
     }
@@ -343,14 +342,17 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.setInt('last_login', DateTime.now().millisecondsSinceEpoch);
     } on FirebaseAuthException catch (e) {
       String msg = 'Login failed';
-      if (e.code == 'user-not-found')
+      if (e.code == 'user-not-found') {
         msg = 'No user found';
-      else if (e.code == 'wrong-password')
+      } else if (e.code == 'wrong-password') {
         msg = 'Incorrect password';
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(msg), backgroundColor: warningColor),
       );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: warningColor),
       );
@@ -372,7 +374,8 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
-            child: Column(
+            child:
+                Column(
               children: [
                 // ... (same UI as before)
                 Container(
@@ -637,7 +640,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const ViewAttendancePage(),
+                        builder: (_) => const CustomAttendanceView(),
                       ),
                     ),
                   ),
@@ -675,7 +678,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildActionCard(
-    BuildContext context, {
+    BuildContext context,
+    {
     required IconData icon,
     required String title,
     required Color color,
@@ -790,7 +794,7 @@ class _AttendancePageState extends State<AttendancePage> {
     setState(() => _isLoading = true);
     final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
     final doc = await FirebaseFirestore.instance
-        .collection('absent_attendance')
+        .collection('semester_4')
         .doc(dateStr)
         .get();
     final absents = doc.exists
@@ -832,18 +836,19 @@ class _AttendancePageState extends State<AttendancePage> {
     final externalODs = <String>[];
 
     attendanceStatus.forEach((reg, status) {
-      if (status == AttendanceStatus.absent)
+      if (status == AttendanceStatus.absent) {
         absents.add(reg);
-      else if (status == AttendanceStatus.od) {
-        if (odType[reg] == 'internal')
+      } else if (status == AttendanceStatus.od) {
+        if (odType[reg] == 'internal') {
           internalODs.add(reg);
-        else if (odType[reg] == 'external')
+        } else if (odType[reg] == 'external') {
           externalODs.add(reg);
+        }
       }
     });
 
     await FirebaseFirestore.instance
-        .collection('absent_attendance')
+        .collection('semester_4')
         .doc(dateStr)
         .set({
           'absents': absents,
@@ -852,6 +857,7 @@ class _AttendancePageState extends State<AttendancePage> {
         });
 
     setState(() => _isLoading = false);
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Attendance submitted!'),
@@ -896,6 +902,7 @@ class _AttendancePageState extends State<AttendancePage> {
     } else if (await canLaunchUrl(Uri.parse(webUrl))) {
       await launchUrl(Uri.parse(webUrl), mode: LaunchMode.externalApplication);
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('WhatsApp not available'),
@@ -1007,10 +1014,11 @@ class _AttendancePageState extends State<AttendancePage> {
                           ),
                         ),
                         confirmDismiss: (dir) async {
-                          if (dir == DismissDirection.startToEnd)
+                          if (dir == DismissDirection.startToEnd) {
                             _setOD(reg, 'external');
-                          else
+                          } else {
                             _setOD(reg, 'internal');
+                          }
                           return false;
                         },
                         child: Card(
@@ -1060,8 +1068,8 @@ class _AttendancePageState extends State<AttendancePage> {
                                 setState(
                                   () => attendanceStatus[reg] =
                                       status == AttendanceStatus.present
-                                      ? AttendanceStatus.absent
-                                      : AttendanceStatus.present,
+                                          ? AttendanceStatus.absent
+                                          : AttendanceStatus.present,
                                 );
                               }
                             },
@@ -1105,92 +1113,16 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 }
 
-// ViewAttendancePage, CustomAttendanceView, etc. – **unchanged except using `student.regNum`, `student.name`**
-
-class ViewAttendancePage extends StatefulWidget {
-  const ViewAttendancePage({super.key});
-  @override
-  _ViewAttendancePageState createState() => _ViewAttendancePageState();
-}
-
-class _ViewAttendancePageState extends State<ViewAttendancePage> {
-  DateTime? fromDate, toDate;
-  bool useDateRange = false;
-
-  Future<void> _selectFromDate(BuildContext context) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: fromDate ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-    );
-    if (picked != null) setState(() => fromDate = picked);
-  }
-
-  Future<void> _selectToDate(BuildContext context) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: toDate ?? DateTime.now(),
-      firstDate: fromDate ?? DateTime(2020),
-      lastDate: DateTime.now(),
-    );
-    if (picked != null) setState(() => toDate = picked);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('View Attendance Records'),
-        backgroundColor: primaryColor,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          children: [
-            // ... (same UI)
-            ElevatedButton(
-              onPressed: () {
-                if (useDateRange && (fromDate == null || toDate == null)) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Select both dates'),
-                      backgroundColor: warningColor,
-                    ),
-                  );
-                  return;
-                }
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => CustomAttendanceView(
-                      fromDate: useDateRange ? fromDate : null,
-                      toDate: useDateRange ? toDate : null,
-                    ),
-                  ),
-                );
-              },
-              child: const Text(
-                'VIEW ATTENDANCE',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class CustomAttendanceView extends StatefulWidget {
-  final DateTime? fromDate;
-  final DateTime? toDate;
-  const CustomAttendanceView({super.key, this.fromDate, this.toDate});
+  const CustomAttendanceView({super.key});
   @override
   _CustomAttendanceViewState createState() => _CustomAttendanceViewState();
 }
 
 class _CustomAttendanceViewState extends State<CustomAttendanceView> {
+  DateTime? fromDate;
+  DateTime? toDate;
+
   List<String> filteredDates = [];
   Map<String, List<String>> dateToAbsents = {},
       dateToInternalODs = {},
@@ -1207,19 +1139,22 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
   Future<void> loadData() async {
     setState(() => _isLoading = true);
     final query = await FirebaseFirestore.instance
-        .collection('absent_attendance')
+        .collection('semester_4')
         .get();
     final allDates = query.docs.map((e) => e.id).toList()..sort();
 
-    if (widget.fromDate != null && widget.toDate != null) {
-      final fromStr = DateFormat('yyyy-MM-dd').format(widget.fromDate!);
-      final toStr = DateFormat('yyyy-MM-dd').format(widget.toDate!);
-      filteredDates = allDates
-          .where((d) => d.compareTo(fromStr) >= 0 && d.compareTo(toStr) <= 0)
-          .toList();
+    if (fromDate != null && toDate != null) {
+      final fromStr = DateFormat('yyyy-MM-dd').format(fromDate!);
+      final toStr = DateFormat('yyyy-MM-dd').format(toDate!);
+      filteredDates =
+          allDates.where((d) => d.compareTo(fromStr) >= 0 && d.compareTo(toStr) <= 0).toList();
     } else {
       filteredDates = allDates;
     }
+
+    dateToAbsents.clear();
+    dateToInternalODs.clear();
+    dateToExternalODs.clear();
 
     for (var doc in query.docs) {
       if (filteredDates.contains(doc.id)) {
@@ -1251,6 +1186,83 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
     }
 
     setState(() => _isLoading = false);
+  }
+
+  Future<void> _showFilterDialog() async {
+    DateTime? tempFromDate = fromDate;
+    DateTime? tempToDate = toDate;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Filter by Date'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: tempFromDate ?? DateTime.now(),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime.now(),
+                          );
+                          if (picked != null) {
+                            setDialogState(() => tempFromDate = picked);
+                          }
+                        },
+                        child: Text(tempFromDate == null
+                            ? 'From'
+                            : DateFormat('dd/MM/yy').format(tempFromDate!)),
+                      ),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: tempToDate ?? DateTime.now(),
+                            firstDate: tempFromDate ?? DateTime(2020),
+                            lastDate: DateTime.now(),
+                          );
+                          if (picked != null) {
+                            setDialogState(() => tempToDate = picked);
+                          }
+                        },
+                        child: Text(tempToDate == null
+                            ? 'To'
+                            : DateFormat('dd/MM/yy').format(tempToDate!)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      fromDate = tempFromDate;
+                      toDate = tempToDate;
+                    });
+                    loadData();
+                    Navigator.pop(context);
+                  },
+                  child: const Text('OK'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   // exportAndShare* methods – updated to use `student.regNum`, `student.name`
@@ -1287,22 +1299,116 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
     await Share.shareXFiles([XFile(file.path)]);
   }
 
-  // ... (OD & Summary exports – same logic, just using `student.regNum`, `student.name`)
+  Future<void> exportAndShareODSheetCSV() async {
+    final csv = StringBuffer();
+    csv.writeln(
+      [
+        'Reg No',
+        'Name',
+        ...filteredDates.map(
+          (d) => DateFormat('dd-MM-yyyy').format(DateTime.parse(d)),
+        ),
+      ].join(','),
+    );
+    for (final student in students) {
+      final reg = student.regNum;
+      final name = student.name.contains(',')
+          ? '"${student.name}"'
+          : student.name;
+      final row = [
+        reg,
+        name,
+        ...filteredDates.map((d) {
+          if (dateToInternalODs[d]?.contains(reg) ?? false) {
+            return 'Internal OD';
+          } else if (dateToExternalODs[d]?.contains(reg) ?? false) {
+            return 'External OD';
+          } else {
+            return '-';
+          }
+        }),
+      ];
+      csv.writeln(row.join(','));
+    }
+    final file = File('${(await getTemporaryDirectory()).path}/od_sheet.csv');
+    await file.writeAsString(csv.toString());
+    await Share.shareXFiles([XFile(file.path)]);
+  }
+
+  Future<void> exportAndShareSummaryCSV() async {
+    final csv = StringBuffer();
+    csv.writeln(
+      [
+        'Reg No',
+        'Name',
+        'Total Days',
+        'Present',
+        'Absent',
+        'Percentage',
+      ].join(','),
+    );
+    studentSummary.forEach((reg, summary) {
+      final name = summary['name'].contains(',')
+          ? '"${summary['name']}"'
+          : summary['name'];
+      final row = [
+        reg,
+        name,
+        summary['total_days'],
+        summary['present'],
+        summary['absent'],
+        summary['percentage'],
+      ];
+      csv.writeln(row.join(','));
+    });
+
+    final file = File(
+      '${(await getTemporaryDirectory()).path}/attendance_summary.csv',
+    );
+    await file.writeAsString(csv.toString());
+    await Share.shareXFiles([XFile(file.path)]);
+  }
 
   @override
   Widget build(BuildContext context) {
-    // ... (same UI, just using `student.regNum`, `student.name`)
     return DefaultTabController(
       length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: Text(
-            'Attendance - ${widget.fromDate != null ? '${DateFormat('dd/MM').format(widget.fromDate!)} - ${DateFormat('dd/MM').format(widget.toDate!)}' : 'All Dates'}',
+            'Attendance - ${fromDate != null ? '${DateFormat('dd/MM').format(fromDate!)} - ${DateFormat('dd/MM').format(toDate!)}' : 'All Dates'}'
           ),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.filter_alt),
+              onPressed: _showFilterDialog,
+            ),
             IconButton(onPressed: loadData, icon: const Icon(Icons.refresh)),
+            Builder(
+              builder: (context) {
+                final tabController = DefaultTabController.of(context);
+                return IconButton(
+                  icon: const Icon(Icons.share),
+                  onPressed: () {
+                    switch (tabController.index) {
+                      case 0:
+                        exportAndShareAbsentSheetCSV();
+                        break;
+                      case 1:
+                        exportAndShareODSheetCSV();
+                        break;
+                      case 2:
+                        exportAndShareSummaryCSV();
+                        break;
+                    }
+                  },
+                );
+              },
+            ),
           ],
           bottom: const TabBar(
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white,
             tabs: [
               Tab(text: 'Absent Sheet'),
               Tab(text: 'OD Sheet'),
@@ -1312,8 +1418,155 @@ class _CustomAttendanceViewState extends State<CustomAttendanceView> {
         ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
-            : const Text('UI unchanged – uses student.regNum & student.name'),
+            : TabBarView(
+                children: [
+                  _buildAbsentSheet(),
+                  _buildODSheet(),
+                  _buildSummarySheet(),
+                ],
+              ),
       ),
+    );
+  }
+
+  Widget _buildAbsentSheet() {
+    if (filteredDates.isEmpty) return const Center(child: Text("No records"));
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columns: [
+          const DataColumn(label: Text('Reg No')),
+          const DataColumn(label: Text('Name')),
+          ...filteredDates.map(
+            (d) => DataColumn(
+              label: Text(DateFormat('dd/MM').format(DateTime.parse(d))),
+            ),
+          ),
+        ],
+        rows: students.map((student) {
+          return DataRow(
+            cells: [
+              DataCell(
+                Text(student.regNum.substring(student.regNum.length - 3)),
+              ),
+              DataCell(Text(student.name)),
+              ...filteredDates.map((d) {
+                final isAbsent =
+                    dateToAbsents[d]?.contains(student.regNum) ?? false;
+                return DataCell(Text(isAbsent ? 'A' : 'P'));
+              }),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildODSheet() {
+    if (filteredDates.isEmpty) return const Center(child: Text("No records"));
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columns: [
+          const DataColumn(label: Text('Reg No')),
+          const DataColumn(label: Text('Name')),
+          ...filteredDates.map(
+            (d) => DataColumn(
+              label: Text(DateFormat('dd/MM').format(DateTime.parse(d))),
+            ),
+          ),
+        ],
+        rows: students.map((student) {
+          return DataRow(
+            cells: [
+              DataCell(
+                Text(student.regNum.substring(student.regNum.length - 3)),
+              ),
+              DataCell(Text(student.name)),
+              ...filteredDates.map((d) {
+                final isInternal =
+                    dateToInternalODs[d]?.contains(student.regNum) ?? false;
+                final isExternal =
+                    dateToExternalODs[d]?.contains(student.regNum) ?? false;
+                String status = '-';
+                if (isInternal) status = 'IOD';
+                if (isExternal) status = 'EOD';
+                return DataCell(Text(status));
+              }),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildSummarySheet() {
+    final summaryList = studentSummary.entries.toList();
+    if (summaryList.isEmpty) return const Center(child: Text("No records"));
+
+    summaryList.sort(
+      (a, b) => a.value['name'].toLowerCase().compareTo(
+        b.value['name'].toLowerCase(),
+      ),
+    );
+
+    return ListView.builder(
+      itemCount: summaryList.length,
+      itemBuilder: (context, index) {
+        final entry = summaryList[index];
+        final reg = entry.key;
+        final summary = entry.value;
+        final percentage = double.parse(summary['percentage']);
+        final cardColor = percentage < 75 ? Colors.red.withOpacity(0.1) : null;
+
+        return Card(
+          color: cardColor,
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: ListTile(
+            title: Text(summary['name']),
+            subtitle: Text('Reg: $reg'),
+            trailing: Text('${summary['percentage']}%'),
+            onTap: () {
+              final absentDates = <String>[];
+              for (final date in filteredDates) {
+                if (dateToAbsents[date]?.contains(reg) ?? false) {
+                  absentDates.add(DateFormat('dd/MM').format(DateTime.parse(date)));
+                }
+              }
+              final absentDatesString = absentDates.isEmpty ? 'None' : absentDates.join(', ');
+
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text(summary['name']),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Total Days: ${summary['total_days']}'),
+                        Text('Present: ${summary['present']}'),
+                        Text('Absent: ${summary['absent']}'),
+                        Text('Percentage: ${summary['percentage']}%'),
+                        const SizedBox(height: 16),
+                        const Text('Absent Dates:', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text(absentDatesString),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Close'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }

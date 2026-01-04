@@ -15,6 +15,8 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final TextEditingController _dateController = TextEditingController();
   final TextEditingController _regController = TextEditingController();
+  String _selectedCollection = 'semester_4';
+  final List<String> _collections = ['absent_attendance', 'semester_4'];
 
   @override
   void dispose() {
@@ -37,92 +39,148 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: _firestore.collection('absent_attendance').snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final docs = snapshot.data!.docs;
-          if (docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.cloud_off, size: 64, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('No attendance records yet.'),
-                  ElevatedButton.icon(
-                    onPressed: _showAddDateDialog,
-                    icon: Icon(Icons.add),
-                    label: Text('Add First Date'),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return ListView.builder(
-            padding: EdgeInsets.all(16),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              // Sort documents by ID (date string) in descending order
-              final sortedDocs = docs
-                ..sort(
-                  (a, b) => b.id.compareTo(a.id),
-                ); // Descending: newest first
-
-              final doc = sortedDocs[index];
-              final dateStr = doc.id;
-              final data = doc.data() as Map<String, dynamic>? ?? {};
-
-              return Card(
-                margin: EdgeInsets.symmetric(vertical: 8),
-                child: ExpansionTile(
-                  leading: Icon(Icons.calendar_month, color: Color(0xFF4361EE)),
-                  title: Text(
-                    _formatDate(dateStr),
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text(
-                    '${(data['absents']?.length ?? 0) + (data['internal_od']?.length ?? 0) + (data['external_od']?.length ?? 0)} marked',
-                  ),
-                  trailing: IconButton(
-                    icon: Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => _confirmDeleteDate(dateStr),
-                  ),
-                  children: [
-                    _buildFieldSection(
-                      'Absentees',
-                      data['absents'],
-                      dateStr,
-                      'absents',
-                      Colors.red,
-                    ),
-                    _buildFieldSection(
-                      'Internal OD',
-                      data['internal_od'],
-                      dateStr,
-                      'internal_od',
-                      Colors.orange,
-                    ),
-                    _buildFieldSection(
-                      'External OD',
-                      data['external_od'],
-                      dateStr,
-                      'external_od',
-                      Colors.purple,
-                    ),
-                  ],
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: SegmentedButton<String>(
+              segments: _collections.map((collection) {
+                String displayText;
+                if (collection == 'absent_attendance') {
+                  displayText = 'Semester 3';
+                } else if (collection == 'semester_4') {
+                  displayText = 'Semester 4';
+                } else {
+                  displayText = collection; // Fallback
+                }
+                return ButtonSegment<String>(
+                  value: collection,
+                  label: Text(displayText),
+                );
+              }).toList(),
+              selected: {_selectedCollection},
+              onSelectionChanged: (Set<String> newSelection) {
+                setState(() {
+                  _selectedCollection = newSelection.first;
+                });
+              },
+              style: ButtonStyle(
+                foregroundColor: WidgetStateProperty.resolveWith<Color?>(
+                  (Set<WidgetState> states) {
+                    if (states.contains(WidgetState.selected)) {
+                      return Colors.white; // Active tab text color
+                    }
+                    return null; // Use the component's default.
+                  },
                 ),
-              );
-            },
-          );
-        },
+                backgroundColor: WidgetStateProperty.resolveWith<Color?>(
+                  (Set<WidgetState> states) {
+                    if (states.contains(WidgetState.selected)) {
+                      return Theme.of(context).primaryColor; // Active tab background color
+                    }
+                    return null; // Use the component's default.
+                  },
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _firestore.collection(_selectedCollection).snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(child: Text('Error: ${snapshot.error}'));
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final docs = snapshot.data!.docs;
+                if (docs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.cloud_off,
+                          size: 64,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(height: 16),
+                        Text('No attendance records in $_selectedCollection.'),
+                        ElevatedButton.icon(
+                          onPressed: _showAddDateDialog,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add First Date'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    // Sort documents by ID (date string) in descending order
+                    final sortedDocs = docs
+                      ..sort(
+                        (a, b) => b.id.compareTo(a.id),
+                      ); // Descending: newest first
+
+                    final doc = sortedDocs[index];
+                    final dateStr = doc.id;
+                    final data = doc.data() as Map<String, dynamic>? ?? {};
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      child: ExpansionTile(
+                        leading: const Icon(
+                          Icons.calendar_month,
+                          color: Color(0xFF4361EE),
+                        ),
+                        title: Text(
+                          _formatDate(dateStr),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                          '${(data['absents']?.length ?? 0) + (data['internal_od']?.length ?? 0) + (data['external_od']?.length ?? 0)} marked',
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => _confirmDeleteDate(dateStr),
+                        ),
+                        children: [
+                          _buildFieldSection(
+                            'Absentees',
+                            data['absents'],
+                            dateStr,
+                            'absents',
+                            Colors.red,
+                          ),
+                          _buildFieldSection(
+                            'Internal OD',
+                            data['internal_od'],
+                            dateStr,
+                            'internal_od',
+                            Colors.orange,
+                          ),
+                          _buildFieldSection(
+                            'External OD',
+                            data['external_od'],
+                            dateStr,
+                            'external_od',
+                            Colors.purple,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -137,8 +195,8 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
     final items = (list is List) ? List<String>.from(list) : <String>[];
 
     return Container(
-      padding: EdgeInsets.all(16),
-      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       decoration: BoxDecoration(
         color: color.withOpacity(0.05),
         borderRadius: BorderRadius.circular(12),
@@ -156,15 +214,15 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
               ),
               ElevatedButton.icon(
                 onPressed: () => _showAddRegDialog(dateStr, field),
-                icon: Icon(Icons.add, size: 16),
-                label: Text('Add'),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add'),
                 style: ElevatedButton.styleFrom(backgroundColor: color),
               ),
             ],
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           if (items.isEmpty)
-            Text('— No entries —', style: TextStyle(color: Colors.grey)),
+            const Text('— No entries —', style: TextStyle(color: Colors.grey)),
           ...items.map((reg) {
             final student = students.firstWhere(
               (s) => s.regNum == reg,
@@ -181,10 +239,14 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
                   style: TextStyle(fontSize: 10, color: color),
                 ),
               ),
-              title: Text(student.name, style: TextStyle(fontSize: 14)),
-              subtitle: Text(reg, style: TextStyle(fontSize: 12)),
+              title: Text(student.name, style: const TextStyle(fontSize: 14)),
+              subtitle: Text(reg, style: const TextStyle(fontSize: 12)),
               trailing: IconButton(
-                icon: Icon(Icons.remove_circle, color: Colors.red, size: 20),
+                icon: const Icon(
+                  Icons.remove_circle,
+                  color: Colors.red,
+                  size: 20,
+                ),
                 onPressed: () => _removeRegFromField(dateStr, field, reg),
               ),
             );
@@ -208,16 +270,16 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Add New Date'),
+        title: const Text('Add New Date'),
         content: TextField(
           controller: _dateController,
-          decoration: InputDecoration(hintText: 'YYYY-MM-DD'),
+          decoration: const InputDecoration(hintText: 'YYYY-MM-DD'),
           keyboardType: TextInputType.datetime,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () {
@@ -227,11 +289,13 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
                 Navigator.pop(ctx);
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Invalid format. Use YYYY-MM-DD')),
+                  const SnackBar(
+                    content: Text('Invalid format. Use YYYY-MM-DD'),
+                  ),
                 );
               }
             },
-            child: Text('Add'),
+            child: const Text('Add'),
           ),
         ],
       ),
@@ -239,11 +303,12 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
   }
 
   Future<void> _addNewDate(String dateStr) async {
-    await _firestore.collection('absent_attendance').doc(dateStr).set({
+    await _firestore.collection(_selectedCollection).doc(dateStr).set({
       'absents': [],
       'internal_od': [],
       'external_od': [],
     }, SetOptions(merge: true));
+    if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('Date $dateStr added')));
@@ -257,12 +322,12 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
         title: Text('Add to $field'),
         content: TextField(
           controller: _regController,
-          decoration: InputDecoration(hintText: 'Enter Reg Number'),
+          decoration: const InputDecoration(hintText: 'Enter Reg Number'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () {
@@ -272,7 +337,7 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
                 Navigator.pop(ctx);
               }
             },
-            child: Text('Add'),
+            child: const Text('Add'),
           ),
         ],
       ),
@@ -280,9 +345,10 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
   }
 
   Future<void> _addRegToField(String dateStr, String field, String reg) async {
-    await _firestore.collection('absent_attendance').doc(dateStr).update({
+    await _firestore.collection(_selectedCollection).doc(dateStr).update({
       field: FieldValue.arrayUnion([reg]),
     });
+    if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('Added $reg to $field')));
@@ -293,9 +359,10 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
     String field,
     String reg,
   ) async {
-    await _firestore.collection('absent_attendance').doc(dateStr).update({
+    await _firestore.collection(_selectedCollection).doc(dateStr).update({
       field: FieldValue.arrayRemove([reg]),
     });
+    if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('Removed $reg from $field')));
@@ -305,26 +372,27 @@ class _DatabaseManagerScreenState extends State<DatabaseManagerScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete Date?'),
+        title: const Text('Delete Date?'),
         content: Text('Delete $dateStr and all its data?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
               await _firestore
-                  .collection('absent_attendance')
+                  .collection(_selectedCollection)
                   .doc(dateStr)
                   .delete();
+              if (!mounted) return;
               Navigator.pop(ctx);
               ScaffoldMessenger.of(
                 context,
               ).showSnackBar(SnackBar(content: Text('Deleted $dateStr')));
             },
-            child: Text('Delete'),
+            child: const Text('Delete'),
           ),
         ],
       ),
